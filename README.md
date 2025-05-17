@@ -27,10 +27,10 @@ Tasks:
 
 ## Implementation Checklist
 
-- [ ] 1. Project Setup: Initialize Git repo, create frontend (React + Tailwind) and backend (Node.js + Express) projects
-- [ ] 2. Supabase Setup: Install CLI, create project, set up local development environment
-- [ ] 3. Database Design: Create schema with intentionally complex/dirty data structure (sales, users, products, regions)
-- [ ] 4. Data Seeding: Populate database with realistic business data including edge cases
+- [x] 1. Project Setup: Initialize Git repo, create frontend (React + Tailwind) and backend (Node.js + Express) projects
+- [x] 2. Supabase Setup: Install CLI, create project, set up local development environment
+- [x] 3. Database Design: Create schema with intentionally complex/dirty data structure (sales, users, products, regions)
+- [x] 4. Data Seeding: Populate database with realistic business data including edge cases
 - [ ] 5. Backend API: Implement Express routes for handling natural language questions
 - [ ] 6. Gemini Integration: Set up Vertex AI client with system prompt describing database schema
 - [ ] 7. SQL Generation: Implement natural language to SQL conversion with error handling
