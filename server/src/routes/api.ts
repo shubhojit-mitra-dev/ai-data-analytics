@@ -1,11 +1,15 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import askController from '../controllers/askController.js';
+import express, { Request, Response, NextFunction } from 'express';
+import * as askController from '../controllers/askController.js';
 
-const router = Router();
+const router = express.Router();
 
-// Route for processing natural language questions
-router.post('/ask', (req: Request, res: Response, next: NextFunction) => {
-  askController.processQuestion(req, res, next);
+// Route for handling natural language questions
+router.post('/ask', async (req, res, next) => {
+  try {
+	await askController.askQuestion(req, res, next);
+  } catch (error) {
+	next(error);
+  }
 });
 
 export default router;

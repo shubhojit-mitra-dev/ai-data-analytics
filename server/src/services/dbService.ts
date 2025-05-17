@@ -1,36 +1,70 @@
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
+// Load environment variables
 dotenv.config();
 
 // Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing Supabase credentials');
+  throw new Error('Missing Supabase credentials. Please check your .env file.');
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
- * Execute a SQL query on the Supabase database
+ * Execute a SQL query against the Supabase database
  * @param sql The SQL query to execute
  * @returns The query results
  */
 export const executeQuery = async (sql: string) => {
   try {
-    console.log('Executing SQL query:', sql);
-    const { data, error } = await supabase.rpc('execute_sql_query', { query: sql });
+    // Debug: log the incoming SQL
+    console.log('Raw SQL received:', sql);
     
-    if (error) {
-      console.error('Database error:', error);
-      throw new Error(`Database query error: ${error.message}`);
+    // Remove trailing semicolons which can cause syntax errors with RPC calls
+    const cleanSql = sql.trim().replace(/;+$/, '');
+    console.log('SQL after removing trailing semicolons:', cleanSql);
+    
+    // Remove comments, whitespace, and normalize before checking
+    const normalizedSql = cleanSql
+      .replace(/\/\*.*?\*\//gs, '') // Remove /* */ style comments
+      .replace(/--.*?$/gm, '')     // Remove -- style comments
+      .replace(/^\s+/gm, '')       // Remove leading whitespace from each line
+      .trim();
+    // Debug: log the normalized SQL
+    console.log('Normalized SQL for validation:', normalizedSql);
+    
+    // More robust check - extract and validate the first significant SQL command
+    const sqlWithoutLeadingComments = normalizedSql.replace(/^(\s|\/\*[\s\S]*?\*\/|--.*?[\r\n])*/, '');
+    const firstKeyword = sqlWithoutLeadingComments.split(/\s+/)[0].toUpperCase();
+    
+    if (firstKeyword === 'SELECT' || firstKeyword === 'WITH') {
+      // Use 'products' table for connection test instead of 'queries'
+      const { data, error } = await supabase.from('products').select('*').limit(0);
+      
+      if (error) {
+        throw new Error(`Supabase connection error: ${error.message}`);
+      }
+      
+      // Execute the raw SQL query with cleaned SQL (no trailing semicolons)
+      const { data: results, error: queryError } = await supabase.rpc('execute_sql_query', {
+        sql_query: cleanSql
+      });
+      
+      if (queryError) {
+        throw new Error(`Query execution error: ${queryError.message}`);
+      }
+      
+      return results;
+    } else {
+      console.error('Non-SELECT query attempted:', sqlWithoutLeadingComments);
+      throw new Error('Only SELECT queries are supported for security reasons');
     }
-    
-    return data;
   } catch (error) {
-    console.error('Error executing query:', error);
+    console.error('Database query error:', error);
     throw error;
   }
 };
@@ -40,92 +74,22 @@ export const executeQuery = async (sql: string) => {
  * @returns Schema information for prompt engineering
  */
 export const getSchemaInfo = async () => {
-  const tables = [
-    {
-      name: 'regions',
-      description: 'Contains geographic regions data with cryptic columns Q1-Q4 representing activity in quarters',
-      columns: [
-        { name: 'id', type: 'serial', description: 'Primary key' },
-        { name: 'name', type: 'varchar', description: 'Region name' },
-        { name: 'country', type: 'varchar', description: 'Country name' },
-        { name: 'zone', type: 'varchar', description: 'Geographic zone (North, South, East, West, Central)' },
-        { name: 'population', type: 'integer', description: 'Population count' },
-        { name: 'economic_index', type: 'numeric', description: 'Economic performance indicator' },
-        { name: 'Q1', type: 'boolean', description: 'Whether region was active in Q1' },
-        { name: 'Q2', type: 'boolean', description: 'Whether region was active in Q2' },
-        { name: 'Q3', type: 'boolean', description: 'Whether region was active in Q3' },
-        { name: 'Q4', type: 'boolean', description: 'Whether region was active in Q4' },
-        { name: 'x_factor', type: 'numeric', description: 'Ambiguous performance metric' }
-      ]
-    },
-    {
-      name: 'products',
-      description: 'Product catalog with details and inventory info',
-      columns: [
-        { name: 'id', type: 'serial', description: 'Primary key' },
-        { name: 'name', type: 'varchar', description: 'Product name' },
-        { name: 'category', type: 'varchar', description: 'Product category' },
-        { name: 'price', type: 'numeric', description: 'Retail price' },
-        { name: 'cost', type: 'numeric', description: 'Cost to company' },
-        { name: 'prd_desc', type: 'text', description: 'Product description' },
-        { name: 'mfg_date', type: 'date', description: 'Manufacturing date' },
-        { name: 'exp_date', type: 'date', description: 'Expiration date if applicable' },
-        { name: 'prd_code', type: 'varchar', description: 'Product code/SKU' },
-        { name: 'stock', type: 'integer', description: 'Total stock available' },
-        { name: 'status', type: 'varchar', description: 'Product status (active, discontinued, etc.)' }
-      ]
-    },
-    {
-      name: 'users',
-      description: 'Customer information with cryptic tier indicators',
-      columns: [
-        { name: 'id', type: 'serial', description: 'Primary key' },
-        { name: 'name', type: 'varchar', description: 'Customer name' },
-        { name: 'email', type: 'varchar', description: 'Customer email' },
-        { name: 'role', type: 'varchar', description: 'Customer role' },
-        { name: 'joined_date', type: 'date', description: 'Date when customer joined' },
-        { name: 'last_active', type: 'timestamp', description: 'Last activity timestamp' },
-        { name: 't1', type: 'boolean', description: 'Tier 1 customer flag' },
-        { name: 't2', type: 'boolean', description: 'Tier 2 customer flag' },
-        { name: 't3', type: 'boolean', description: 'Tier 3 customer flag' },
-        { name: 'usr_pref', type: 'jsonb', description: 'User preferences in JSON format' }
-      ]
-    },
-    {
-      name: 'sales',
-      description: 'Sales transactions with cryptic columns for channels and promotions',
-      columns: [
-        { name: 'id', type: 'serial', description: 'Primary key' },
-        { name: 'date', type: 'date', description: 'Sale date' },
-        { name: 'amount', type: 'numeric', description: 'Sale amount' },
-        { name: 'product_id', type: 'integer', description: 'Foreign key to products' },
-        { name: 'user_id', type: 'integer', description: 'Foreign key to users' },
-        { name: 'region_id', type: 'integer', description: 'Foreign key to regions' },
-        { name: 'qty', type: 'integer', description: 'Quantity sold' },
-        { name: 'dscnt', type: 'numeric', description: 'Discount percentage applied' },
-        { name: 'c1', type: 'varchar', description: 'Channel (online, in-store)' },
-        { name: 'c2', type: 'varchar', description: 'Campaign code' },
-        { name: 'p1', type: 'boolean', description: 'Promotion 1 applied' },
-        { name: 'p2', type: 'boolean', description: 'Promotion 2 applied' },
-        { name: 's', type: 'integer', description: 'Satisfaction score (1-10)' },
-        { name: 'ts', type: 'timestamp', description: 'Timestamp of sale record' }
-      ]
-    },
-    {
-      name: 'inventory',
-      description: 'Inventory levels by product and region',
-      columns: [
-        { name: 'id', type: 'serial', description: 'Primary key' },
-        { name: 'product_id', type: 'integer', description: 'Foreign key to products' },
-        { name: 'region_id', type: 'integer', description: 'Foreign key to regions' },
-        { name: 'qty_available', type: 'integer', description: 'Quantity available in stock' },
-        { name: 'last_restocked', type: 'timestamp', description: 'Last restock timestamp' },
-        { name: 'min_stock_level', type: 'integer', description: 'Minimum stock level threshold' },
-        { name: 'max_stock_level', type: 'integer', description: 'Maximum stock capacity' },
-        { name: 'flag', type: 'varchar', description: 'Stock status flag (normal, low, critical)' }
-      ]
-    }
-  ];
-  
-  return tables;
+  return `
+    Table regions: id (serial), name (varchar), country (varchar), zone (varchar), population (integer), economic_index (numeric), Q1 (boolean), Q2 (boolean), Q3 (boolean), Q4 (boolean), x_factor (numeric)
+    
+    Table products: id (serial), name (varchar), category (varchar), price (numeric), cost (numeric), prd_desc (text), mfg_date (date), exp_date (date), prd_code (varchar), stock (integer), status (varchar)
+    
+    Table users: id (serial), name (varchar), email (varchar), role (varchar), joined_date (date), last_active (timestamp), t1 (boolean), t2 (boolean), t3 (boolean), usr_pref (jsonb)
+    
+    Table sales: id (serial), date (date), amount (numeric), product_id (integer), user_id (integer), region_id (integer), qty (integer), dscnt (numeric), c1 (varchar), c2 (varchar), p1 (boolean), p2 (boolean), s (integer), ts (timestamp)
+    
+    Table inventory: id (serial), product_id (integer), region_id (integer), qty_available (integer), last_restocked (timestamp), min_stock_level (integer), max_stock_level (integer), flag (varchar)
+    
+    Relationships:
+    - sales.product_id references products.id
+    - sales.user_id references users.id
+    - sales.region_id references regions.id
+    - inventory.product_id references products.id
+    - inventory.region_id references regions.id
+  `;
 };

@@ -1,128 +1,161 @@
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
 import * as dbService from './dbService.js';
 
 dotenv.config();
 
 // API configuration
-const API_KEY = process.env.GEMINI_API_KEY;
-const API_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent';
+// const API_KEY = process.env.GEMINI_API_KEY;
+// Updated to use Gemini Flash instead of Gemini Pro
+// const API_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-flash:generateContent';
 
+// Define the interface for the Gemini API response
 interface GeminiResponse {
+  candidates: {
+    content: {
+      parts: {
+        text: string;
+      }[];
+    };
+  }[];
+}
+
+// Define the interface for our SQL generation output
+export interface SQLResult {
   sql: string;
   explanation: string;
+  naturalLanguageResponse?: string;
+  responseTemplate?: string;
 }
 
 /**
- * Generate SQL from natural language using Gemini Pro
- * @param question The natural language question to process
- * @returns An object containing the generated SQL and explanation
+ * Generates SQL from natural language using Gemini Flash
  */
-export const generateSQL = async (question: string): Promise<GeminiResponse> => {
+export const generateSQL = async (question: string): Promise<SQLResult> => {
   try {
-    if (!API_KEY) {
-      throw new Error('Missing Gemini API key');
-    }
-
-    // Get the database schema information for prompt engineering
-    const schema = await dbService.getSchemaInfo();
+    // Get API key from environment variables
+    const apiKey = process.env.GEMINI_API_KEY;
     
-    // Create a detailed schema description for the prompt
-    const schemaDescription = schema.map(table => {
-      const columnsDescription = table.columns.map(col => 
-        `    - ${col.name} (${col.type}): ${col.description}`
-      ).join('\n');
-      
-      return `- ${table.name}: ${table.description}\n${columnsDescription}`;
-    }).join('\n\n');
-
-    // Create a prompt that explains the task and provides context
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is not defined in environment variables');
+    }
+    
+    // Get database schema information from the dbService
+    const schemaInfo = await dbService.getSchemaInfo();
+    
+    // Build the prompt for Gemini Flash
     const prompt = `
-You are an advanced SQL query generator that specializes in converting natural language questions about business data into precise SQL queries for a PostgreSQL database.
-
-DATABASE SCHEMA:
-${schemaDescription}
-
-RELATIONSHIPS:
-- sales.product_id references products.id
-- sales.user_id references users.id
-- sales.region_id references regions.id
-- inventory.product_id references products.id
-- inventory.region_id references regions.id
-
-IMPORTANT NOTES:
-1. The schema has intentionally cryptic column names (like "Q1", "Q2", "c1", "p1", etc.) that you must interpret correctly:
-   - In regions table: "Q1", "Q2", "Q3", "Q4" are boolean flags indicating if the region was active in that quarter
-   - In sales table: "c1" is the sales channel (online/in-store), "c2" is campaign code
-   - In sales table: "dscnt" is discount percentage, "s" is satisfaction score (1-10)
-   - In users table: "t1", "t2", "t3" are boolean flags for customer tier levels
-
-2. When analyzing sales trends by quarter:
-   - Q1 = Jan-Mar (dates '2024-01-01' to '2024-03-31')
-   - Q2 = Apr-Jun (dates '2024-04-01' to '2024-06-30')
-   - Q3 = Jul-Sep (dates '2024-07-01' to '2024-09-30')
-   - Q4 = Oct-Dec (dates '2024-10-01' to '2024-12-31')
-
-3. The "zone" column in regions table has values like "North", "South", "East", "West", "Central"
-
-USER QUESTION: "${question}"
-
-Generate a PostgreSQL query that answers this question. Your output must be in the following JSON format:
-{
-  "sql": "THE SQL QUERY",
-  "explanation": "A detailed explanation of how the query works and why it answers the question"
-}
-
-Be careful with joins and ensure the query handles potential NULL values. Make educated assumptions when the question is ambiguous.
-`;
-
-    const response = await fetch(`${API_URL}?key=${API_KEY}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      })
-    });
-
+      You are an expert business analyst who helps translate business questions into SQL queries and provides natural language answers.
+      
+      Here's the exact database schema with all columns:
+      ${schemaInfo}
+      
+      The user asked: "${question}"
+      
+      Please generate:
+      1. A valid PostgreSQL query that answers this question
+      2. A brief explanation of the SQL query
+      3. A template for a natural language response that can be filled with actual data values
+      
+      SQL requirements:
+      - Use ONLY columns that exist exactly as shown in the schema above
+      - Use proper case sensitivity for columns like "Q1", "Q2", "Q3", "Q4", and "flag"
+      - Join tables using the relationships defined in the schema
+      - Handle cryptic column names appropriately (c1=channel, c2=campaign, p1/p2=promotions, etc.)
+      - Always use column aliases for clarity, especially for calculated values
+      - For questions about highest/lowest values, order results appropriately and use LIMIT 1
+      
+      Response Template requirements:
+      - Create a natural language template response that includes placeholders in {{double curly braces}}
+      - Placeholders MUST be EXACTLY the same as column aliases in your SQL query
+      - For example, if your SQL has "p.name AS product_name", use {{product_name}} in your template
+      - For percentages, do NOT include % symbols in placeholders
+      - Keep it concise but informative (2-4 sentences)
+      - Make sure all column names referenced in the template exist in your SQL query results
+      
+      Format your response EXACTLY as follows:
+      SQL: [your SQL query with clear column aliases]
+      EXPLANATION: [brief explanation of how the query works]
+      TEMPLATE: The product with the highest profit margin last quarter was {{product_name}} with a profit margin of {{profit_margin_percentage}}%. This premium product consistently outperforms others in our catalog.
+    `;
+    
+    // Call the Gemini Flash API
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1024
+          }
+        })
+      }
+    );
+    
     if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`Gemini API error: ${response.status} ${errorData}`);
+      const errorText = await response.text();
+      throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+    }
+    
+    const data = await response.json() as GeminiResponse;
+    
+    if (!data.candidates || data.candidates.length === 0) {
+      throw new Error('No response from Gemini API');
+    }
+    
+    // Extract the generated text
+    const generatedText = data.candidates[0].content.parts[0].text.trim();
+    
+    // Parse the output to extract SQL, explanation, and template
+    const sqlMatch = generatedText.match(/SQL:\s*([\s\S]*?)(?=EXPLANATION:|$)/i);
+    const explanationMatch = generatedText.match(/EXPLANATION:\s*([\s\S]*?)(?=TEMPLATE:|$)/i);
+    const templateMatch = generatedText.match(/TEMPLATE:\s*([\s\S]*?)$/i);
+    
+    if (!sqlMatch) {
+      throw new Error('No SQL query found in Gemini response');
     }
 
-    const data = await response.json() as {
-      candidates: Array<{
-        content: {
-          parts: Array<{
-            text: string
-          }>
-        }
-      }>
-    };
+    // Clean up extracted SQL: remove markdown code fences and trim
+    let rawSql = sqlMatch[1].trim();
+    rawSql = rawSql.replace(/```(?:sql)?/gi, '').trim();
     
-    // Extract the response text from the Gemini API response
-    const responseText = data.candidates[0].content.parts[0].text;
+    const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation available';
+    let responseTemplate = templateMatch ? templateMatch[1].trim() : 'No response template available';
     
-    // Parse the JSON response from the text
-    // The response might be wrapped in ```json ``` blocks, so we need to extract the JSON
-    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) || 
-                     responseText.match(/```\s*([\s\S]*?)\s*```/) || 
-                     [null, responseText];
+    // Ensure all placeholders use double curly braces
+    if (!responseTemplate.includes('{{') && responseTemplate.includes('{')) {
+      responseTemplate = responseTemplate.replace(/\{([^}]+)\}/g, '{{$1}}');
+    }
     
-    const jsonText = jsonMatch[1].trim();
-    const result = JSON.parse(jsonText);
+    // Extract column aliases from the SQL query to help with debugging
+    const aliasRegex = /\bAS\s+["']?([a-zA-Z0-9_]+)["']?/gi;
+    const aliases = [];
+    let match;
+    while ((match = aliasRegex.exec(rawSql)) !== null) {
+      aliases.push(match[1]);
+    }
+    console.log('Extracted SQL aliases:', aliases);
     
     return {
-      sql: result.sql,
-      explanation: result.explanation
+      sql: rawSql,
+      explanation,
+      responseTemplate
     };
+    
   } catch (error) {
     console.error('Error generating SQL:', error);
-    throw new Error(`Failed to generate SQL: ${(error as Error).message}`);
+    throw error;
   }
 };

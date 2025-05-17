@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { errorHandler } from './middlewares/errorHandler.js';
 import apiRoutes from './routes/api.js';
+import { errorHandler } from './middlewares/errorHandler.js';
 
 // Load environment variables
 dotenv.config();
@@ -18,17 +18,19 @@ app.use(express.json());
 // Routes
 app.use('/api', apiRoutes);
 
-// Default route
-app.get('/', (req, res) => {
-  res.send('AI SQL Data Agent API is running');
+// Health check route
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
 });
 
-// Error handling middleware
+// Error handler
 app.use(errorHandler);
 
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Health check available at http://localhost:${PORT}/health`);
+  console.log(`API available at http://localhost:${PORT}/api`);
 });
 
 export default app;
